@@ -1,0 +1,392 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>A/B Challenge Quiz</title>
+    <!-- Load Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Use Inter font family -->
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f7f9fb;
+        }
+        /* Custom radio button styling */
+        .quiz-option {
+            transition: all 0.2s;
+            cursor: pointer;
+        }
+        .quiz-option:hover {
+            box-shadow: 0 4px 15px rgba(59, 130, 246, 0.2);
+            transform: translateY(-2px);
+        }
+        input[type="radio"]:checked + label {
+            background-color: #3b82f6; /* Blue 500 */
+            color: white;
+            border-color: #2563eb; /* Blue 600 */
+        }
+        /* Style for the winner display */
+        .winner-tag {
+            background: linear-gradient(45deg, #FFD700, #FFA500);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+    </style>
+</head>
+<body class="min-h-screen flex items-center justify-center p-4">
+
+    <div id="app" class="w-full max-w-lg bg-white p-6 md:p-8 rounded-xl shadow-2xl border border-gray-100">
+        <h1 class="text-3xl font-bold text-center text-gray-800 mb-6">The A/B Challenge</h1>
+
+        <!-- Winner Display (Always visible) -->
+        <div id="winner-display" class="mb-6 p-4 bg-yellow-50 border border-yellow-200 rounded-lg text-center shadow-inner hidden">
+            <p class="text-lg font-semibold text-gray-700">🏆 Current Champion 🏆</p>
+            <p id="winner-name" class="winner-tag text-2xl font-extrabold mt-1">
+                Loading...
+            </p>
+        </div>
+
+        <!-- Section 1: Name Input -->
+        <div id="name-input-section">
+            <p class="text-gray-600 mb-4">Enter your name to start the 10-question quiz. You must answer all questions correctly to be crowned the winner!</p>
+            <div class="mb-4">
+                <label for="userName" class="block text-sm font-medium text-gray-700 mb-1">Your Name</label>
+                <input type="text" id="userName" placeholder="e.g., Alex Johnson" class="w-full p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" maxlength="30">
+            </div>
+            <button id="startQuizBtn" class="w-full bg-blue-600 text-white p-3 rounded-lg font-semibold hover:bg-blue-700 transition duration-150 shadow-lg shadow-blue-500/50" disabled>
+                Start Quiz
+            </button>
+        </div>
+
+        <!-- Section 2: Quiz Questions -->
+        <div id="quiz-section" class="hidden">
+            <div id="quiz-container">
+                <!-- Questions will be dynamically inserted here -->
+            </div>
+            <button id="submitQuizBtn" class="w-full bg-green-600 text-white p-3 rounded-lg font-semibold hover:bg-green-700 transition duration-150 mt-6 shadow-lg shadow-green-500/50">
+                Submit Answers
+            </button>
+        </div>
+
+        <!-- Section 3: Result Display -->
+        <div id="result-section" class="hidden text-center p-6 bg-gray-50 rounded-lg">
+            <h2 id="result-message" class="text-2xl font-bold text-gray-800 mb-3"></h2>
+            <p id="score-text" class="text-xl text-gray-600 mb-4"></p>
+            <button onclick="window.location.reload()" class="bg-indigo-600 text-white p-3 rounded-lg font-semibold hover:bg-indigo-700 transition duration-150">
+                Try Again
+            </button>
+        </div>
+
+        <!-- Loading/Error Message -->
+        <div id="loading-message" class="text-center text-sm text-gray-500 mt-4">Initializing Firebase...</div>
+
+    </div>
+
+    <!-- Firebase SDKs -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, setDoc, onSnapshot, collection, query, limit, getDocs } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js"; // Import for logging
+
+        // --- GLOBAL VARIABLES & CONFIGURATION ---
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
+        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+
+        let db;
+        let auth;
+        let userId = null;
+        let isAuthReady = false;
+
+        const QUIZ_QUESTIONS = [
+            { q: "Which planet is known as the Red Planet?", options: { A: "Mars", B: "Jupiter" }, correct: "A" },
+            { q: "What is the capital of France?", options: { A: "Rome", B: "Paris" }, correct: "B" },
+            { q: "Is the chemical symbol for Gold 'Ag'?", options: { A: "Yes", B: "No" }, correct: "B" },
+            { q: "Does a spider typically have 8 legs?", options: { A: "Yes", B: "No" }, correct: "A" },
+            { q: "Is the Pacific the largest ocean?", options: { A: "Yes", B: "No" }, correct: "A" },
+            { q: "Is the color of a school bus primarily yellow?", options: { A: "Yes", B: "No" }, correct: "A" },
+            { q: "Is Mount Everest located in Africa?", options: { A: "Yes", B: "No" }, correct: "B" },
+            { q: "Is 2 + 2 = 5?", options: { A: "Yes", B: "No" }, correct: "B" },
+            { q: "Is Python a type of snake?", options: { A: "Yes", B: "No" }, correct: "A" },
+            { q: "Is the fastest land animal the cheetah?", options: { A: "Yes", B: "No" }, correct: "A" },
+        ];
+
+        // --- DOM ELEMENTS ---
+        const nameInput = document.getElementById('userName');
+        const startQuizBtn = document.getElementById('startQuizBtn');
+        const quizSection = document.getElementById('quiz-section');
+        const nameInputSection = document.getElementById('name-input-section');
+        const quizContainer = document.getElementById('quiz-container');
+        const submitQuizBtn = document.getElementById('submitQuizBtn');
+        const resultSection = document.getElementById('result-section');
+        const resultMessage = document.getElementById('result-message');
+        const scoreText = document.getElementById('score-text');
+        const loadingMessage = document.getElementById('loading-message');
+        const winnerDisplay = document.getElementById('winner-display');
+        const winnerNameEl = document.getElementById('winner-name');
+
+        let currentUserName = '';
+        let answers = {}; // Store user's selected answers
+
+        // --- FIREBASE INITIALIZATION & AUTHENTICATION (Awaited using IIFE) ---
+        (async () => {
+            try {
+                const app = initializeApp(firebaseConfig);
+                db = getFirestore(app);
+                auth = getAuth(app);
+
+                loadingMessage.textContent = 'Authenticating...';
+
+                // 1. Attempt Sign-In (Custom Token or Anonymous)
+                try {
+                    if (initialAuthToken) {
+                        await signInWithCustomToken(auth, initialAuthToken);
+                    } else {
+                        await signInAnonymously(auth);
+                    }
+                } catch (e) {
+                    // Fallback to anonymous sign-in if custom token fails (in case the token expired)
+                    if (initialAuthToken) {
+                        console.warn("Custom token sign-in failed, trying anonymous.", e);
+                        await signInAnonymously(auth);
+                    } else {
+                        throw e; // If anonymous sign-in fails, re-throw
+                    }
+                }
+
+                // 2. Wait for Auth State to Settle and capture userId
+                await new Promise((resolve, reject) => {
+                    const unsubscribe = onAuthStateChanged(auth, (user) => {
+                        if (user) {
+                            userId = user.uid;
+                            isAuthReady = true;
+                            unsubscribe(); // Stop listening
+                            resolve();
+                        } else {
+                            // This means even after sign-in attempts, we have no user.
+                            console.error("Auth state settled to null unexpectedly. Permissions will fail.");
+                            isAuthReady = false;
+                            unsubscribe();
+                            reject(new Error("Failed to establish authenticated session."));
+                        }
+                    });
+                });
+
+                // 3. Initialize App Logic (only if a user session was established)
+                if (isAuthReady && userId) {
+                    loadingMessage.classList.add('hidden');
+                    initApp();
+                } else {
+                    loadingMessage.textContent = 'Fatal Error: Could not establish authenticated session.';
+                }
+
+            } catch (e) {
+                console.error("Firebase Initialization or Sign-in Failed:", e);
+                loadingMessage.textContent = 'Fatal Error: Initialization failed. Check Firebase config/rules.';
+            }
+        })();
+
+
+        // --- MAIN APPLICATION LOGIC ---
+
+        function initApp() {
+            // Enable button based on name input
+            nameInput.addEventListener('input', () => {
+                startQuizBtn.disabled = nameInput.value.trim().length === 0;
+            });
+
+            startQuizBtn.addEventListener('click', startQuiz);
+            submitQuizBtn.addEventListener('click', submitQuiz);
+
+            renderQuizQuestions();
+            // Start listening for the winner only after auth is confirmed ready
+            listenForWinner();
+        }
+
+        function renderQuizQuestions() {
+            quizContainer.innerHTML = '';
+            QUIZ_QUESTIONS.forEach((qData, index) => {
+                const qNum = index + 1;
+                const questionHtml = `
+                    <div class="mb-6 p-4 border border-gray-200 rounded-xl bg-white shadow-md">
+                        <p class="text-lg font-semibold text-gray-800 mb-3">
+                            ${qNum}. ${qData.q}
+                        </p>
+                        <div class="flex flex-col space-y-3">
+                            ${renderOption(qNum, 'A', qData.options.A)}
+                            ${renderOption(qNum, 'B', qData.options.B)}
+                        </div>
+                    </div>
+                `;
+                quizContainer.innerHTML += questionHtml;
+            });
+
+            // Re-attach event listeners for dynamic radio inputs
+            document.querySelectorAll('input[type="radio"]').forEach(radio => {
+                radio.addEventListener('change', (e) => {
+                    const qIndex = parseInt(e.target.name.replace('q', '')) - 1;
+                    answers[qIndex] = e.target.value;
+                });
+            });
+        }
+
+        function renderOption(qNum, value, labelText) {
+            const id = `q${qNum}${value}`;
+            return `
+                <div class="relative quiz-option bg-gray-100 p-3 rounded-lg border-2 border-transparent">
+                    <input type="radio" id="${id}" name="q${qNum}" value="${value}" class="hidden peer">
+                    <label for="${id}" class="block text-gray-700 font-medium cursor-pointer peer-checked:text-white">
+                        <span class="font-bold mr-2">${value}:</span> ${labelText}
+                    </label>
+                </div>
+            `;
+        }
+
+        function startQuiz() {
+            currentUserName = nameInput.value.trim();
+            if (!currentUserName) return;
+
+            // Check if all questions have been rendered (sanity check)
+            if (quizContainer.children.length !== QUIZ_QUESTIONS.length) {
+                renderQuizQuestions();
+            }
+
+            nameInputSection.classList.add('hidden');
+            quizSection.classList.remove('hidden');
+            resultSection.classList.add('hidden');
+        }
+
+        function submitQuiz() {
+            // 1. Check if all questions are answered
+            if (Object.keys(answers).length < QUIZ_QUESTIONS.length) {
+                alertModal("Please answer all 10 questions before submitting!", 'Error');
+                return;
+            }
+
+            // 2. Calculate Score
+            let correctCount = 0;
+            QUIZ_QUESTIONS.forEach((qData, index) => {
+                if (answers[index] === qData.correct) {
+                    correctCount++;
+                }
+            });
+
+            // 3. Display Results
+            quizSection.classList.add('hidden');
+            resultSection.classList.remove('hidden');
+
+            scoreText.textContent = `You scored ${correctCount} out of ${QUIZ_QUESTIONS.length}.`;
+
+            if (correctCount === QUIZ_QUESTIONS.length) {
+                resultMessage.textContent = `Congratulations, ${currentUserName}! You are a GENIUS!`;
+                resultMessage.classList.remove('text-red-600');
+                resultMessage.classList.add('text-green-600');
+                saveWinner(currentUserName, correctCount);
+            } else {
+                resultMessage.textContent = `Keep practicing, ${currentUserName}!`;
+                resultMessage.classList.remove('text-green-600');
+                resultMessage.classList.add('text-red-600');
+            }
+        }
+
+        // --- FIREBASE WINNER LOGIC ---
+
+        async function saveWinner(name, score) {
+            // isAuthReady is guaranteed by the startup wrapper
+            if (!isAuthReady || !db) {
+                console.warn("Auth or DB not ready. Cannot save winner yet.");
+                return;
+            }
+
+            try {
+                // Public Collection path for collaborative data: /artifacts/{appId}/public/data/{collectionName}
+                const winnersColRef = collection(db, 'artifacts', appId, 'public', 'data', 'quiz_winners');
+                const winnerDocRef = doc(winnersColRef, userId); // Use userId as doc ID to prevent spamming if a user wins multiple times
+
+                await setDoc(winnerDocRef, {
+                    name: name,
+                    score: score, // Should be 10 here
+                    timestamp: new Date().toISOString(),
+                    userId: userId,
+                });
+                console.log("Winner saved successfully to Firestore.");
+            } catch (error) {
+                console.error("Error saving winner to Firestore:", error);
+            }
+        }
+
+        function listenForWinner() {
+            // DB is guaranteed to be initialized here because initApp is only called after DB initialization
+            if (!db) {
+                console.error("Firestore database object is not available.");
+                return;
+            }
+
+            try {
+                const winnersColRef = collection(db, 'artifacts', appId, 'public', 'data', 'quiz_winners');
+
+                // Query to get any winner
+                const q = query(winnersColRef);
+
+                onSnapshot(q, async (snapshot) => {
+                    const winners = [];
+                    snapshot.forEach(doc => {
+                        winners.push(doc.data());
+                    });
+
+                    // Simple logic: Show the latest perfect scorer (10/10)
+                    const perfectWinners = winners.filter(w => w.score === 10)
+                                                // Sort descending by timestamp
+                                                .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+
+                    if (perfectWinners.length > 0) {
+                        const champion = perfectWinners[0];
+                        winnerNameEl.textContent = champion.name;
+                        winnerDisplay.classList.remove('hidden');
+                        // Optional: If the current user just won, highlight their name.
+                        if (champion.userId === userId && !resultSection.classList.contains('hidden')) {
+                             resultMessage.textContent += " (You are the current Champion!)";
+                        }
+                    } else {
+                        winnerNameEl.textContent = 'Be the first perfect scorer!';
+                        winnerDisplay.classList.remove('hidden');
+                    }
+                }, (error) => {
+                    // This error callback handles insufficient permissions errors from Firestore
+                    console.error("Error listening to winner snapshot:", error);
+                });
+
+            } catch (error) {
+                console.error("Error setting up winner listener:", error);
+            }
+        }
+
+
+        // --- CUSTOM ALERT MODAL ---
+        function alertModal(message, title = 'Notification') {
+            let modal = document.getElementById('customAlertModal');
+            if (!modal) {
+                modal = document.createElement('div');
+                modal.id = 'customAlertModal';
+                modal.className = 'fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50 hidden';
+                modal.innerHTML = `
+                    <div class="bg-white p-6 rounded-lg shadow-xl max-w-sm w-full">
+                        <h3 id="alertTitle" class="text-xl font-bold mb-3 text-gray-800"></h3>
+                        <p id="alertMessage" class="text-gray-600 mb-4"></p>
+                        <button id="alertCloseBtn" class="w-full bg-blue-600 text-white p-2 rounded-lg font-semibold hover:bg-blue-700 transition">Close</button>
+                    </div>
+                `;
+                document.body.appendChild(modal);
+                document.getElementById('alertCloseBtn').onclick = () => modal.classList.add('hidden');
+            }
+            document.getElementById('alertTitle').textContent = title;
+            document.getElementById('alertMessage').textContent = message;
+            modal.classList.remove('hidden');
+        }
+
+    </script>
+</body>
+</html>
